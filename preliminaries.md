@@ -191,5 +191,38 @@ x.grad == 2 * x # True
 在运行反向传播函数后，立即再次运行，会报错：Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed). Saved intermediate values of the graph are freed when you call .backward() or autograd.grad(). Specify retain_graph=True if you need to backward through the graph a second time or if you need to access saved tensors after calling backward.
 
 ## 概率
+#### set up
+```py
+import matplotlib.pyplot as plt
+import torch
+from torch.distributions import multinomial
+from d2l import torch as d2l
+```
+
+传入概率向量，输出另一个长度相同的向量：索引i处的值是采样结果中i出现的次数
+```py
+fair_probs = torch.ones([6]) / 6
+print(multinomial.Multinomial(1, fair_probs).sample()) # 1是次数
+# >>> something like 'tensor([0, 0, 1, 0, 0, 0])
+
+# true possibilities simulation:
+print(multinomial.Multinomial(10000, fair_probs).sample() / 10000)
+
+# show plotly
+counts = multinomial.Multinomial(10, fair_probs).sample((500,)) # 500 groups of experiment
+cum_counts = counts.cumsum(dim=0)
+estimates = cum_counts / cum_counts.sum(dim=1, keepdims=True)
+
+d2l.set_figsize((6, 4.5))
+for i in range(6):
+    d2l.plt.plot(estimates[:, i].numpy(), label=("P(die=" + str(i
+    +1) + ")"))
+    d2l.plt.axhline(y=0.167, color='black', linestyle='dashed')
+    d2l.plt.gca().set_xlabel('Groups of experiments')
+    d2l.plt.gca().set_ylabel('Estimated probability')
+    d2l.plt.legend()
+plt.show()
+```
+
 
 
