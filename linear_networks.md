@@ -473,3 +473,318 @@ def cross_entrophy(y_hat, y):
 
 print(cross_entrophy(y_hat, y))
 ```
+
+### accuracy of prediciton
+In real cases, the system must give out a hard prediction: the type that has the biggest possibility.
+```py
+def accuracy(y_hat, y):
+    """计算预测正确的数量"""
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
+        y_hat = y_hat.argmax(axes=1)
+    cmp = (y_hat.type(y.dtype) == y)    #将y_hat数据类型转换成y一样的数据类型
+    return float(cmp.type(y.dtype).sum())
+
+    accuracy(y_hat, y) / len(y)
+
+# evaluate the accuracy of any model in the net.
+def evaluate_accuracy(net, data_iter):
+    """计算在指定数集上模型的精度"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # set the model into evaluation mode
+    metric = Accumulator(2) # the number of correct predictions and all the predictions.
+    with torch.no_grad:
+        for X, y in data_iter:
+            metric.add(accuracy(net(X), y))
+    return metric[0] / metric[1]
+
+# Accumulator -> the number of correct predictions and all the predictions.
+# It accumulates as the time passes.
+class Accumulator:
+    """在n个变量上累加"""
+    def __init__(self, n):
+        self.data = [0, 0] * n
+
+    def add(self, *args):
+        self.data = [a + float(b) for a, b in zip(self.data, args)]
+
+    def reset(self):
+        self.data = [0, 0] * len(self.data)
+
+    def __getitme__(self, idx):
+        return self.data[idx]
+
+evaluate_accuracy(net, test_iter)
+# >>> 0.0625
+```
+在PyTorch中，`.type()` 方法用于将张量（Tensor）转换为指定的数据类型。这个方法返回一个新的张量，其数据类型转换为你指定的类型，但不改变原始张量。
+
+`.type()` 方法的基本语法如下：
+
+```python
+tensor.type(new_type)
+```
+
+- `tensor`：要转换类型的原始张量。
+- `new_type`：字符串或 `torch.dtype` 对象，表示新的数据类型。
+
+### Train
+```py
+# Define a function to train one epoch.
+def train_epoch_ch2(net, train_iter, loss, updater):
+    """训练模型一个迭代周期"""
+    # set the model to training mode
+    if isinstance(net, torch.nn.Module):
+        net.train()
+    # 训练损失总和、训练准确度和总和、样本数
+    metric = Accumulator(3)
+    for X, y in train_iter:
+        # calculate the grad and update the parameters
+        y_hat = net(X)
+        l = loss(y_hat, y)
+        if isinstance(updater, torch.optim.Optimizer):
+            # use Pytorch-incuded optimizer and loss function
+            updater.zero_grad()
+            l.mean().backward()
+            updater.step()
+        else:
+            # use specified ones
+            l.sum().backward()
+            updater(X.shape[0])
+        metric.add(float(l.sum()), accuracy(y_hat, y), y.numel())
+    # return the training loss and the training accuracy
+    return matric[0] / matric[2], metric[1] / matric[2]
+```
+### isinstance()
+在Python中，`isinstance()` 函数用于检查一个对象是否是一个已知的类型。它返回一个布尔值，如果对象是给定类型的实例，则返回 `True`；否则返回 `False`。
+
+##### 基本用法
+
+`isinstance()` 函数的基本语法如下：
+
+```python
+isinstance(object, classinfo)
+```
+
+- `object`：要检查的对象。
+- `classinfo`：可以是但不限于以下类型：
+  - 类对象。
+  - 包含多个类对象的元组。
+  - `type()` 函数返回的类型对象。
+
+下面是一些使用 `isinstance()` 函数的例子：
+
+```python
+# 检查一个变量是否是int类型
+x = 10
+print(isinstance(x, int))  # 输出: True
+
+# 检查一个变量是否是str类型
+y = "Hello"
+print(isinstance(y, str))  # 输出: True
+
+# 检查一个变量是否是list类型
+z = [1, 2, 3]
+print(isinstance(z, list))  # 输出: True
+
+# 检查一个变量是否是元组中的任一类型
+print(isinstance(z, (list, tuple)))  # 输出: True
+```
+
+##### 检查是否是子类的实例
+
+`isinstance()` 也可以检测一个对象是否是某个类的子类的实例：
+
+```python
+class BaseClass:
+    pass
+
+class SubClass(BaseClass):
+    pass
+
+obj = SubClass()
+
+# 检查是否是SubClass的实例
+print(isinstance(obj, SubClass))  # 输出: True
+
+# 检查是否是BaseClass的实例
+print(isinstance(obj, BaseClass))  # 输出: True
+```
+
+##### 与 `type()` 比较
+
+`isinstance()` 和 `type()` 都可以用来检查一个对象的类型，但它们之间有一个重要的区别：`isinstance()` 会考虑到继承关系，而 `type()` 不会。这意味着如果一个对象是某个类的子类的实例，`isinstance()` 会返回 `True`，而 `type()` 则不会。
+
+```python
+obj = SubClass()
+
+# 使用isinstance检查
+print(isinstance(obj, BaseClass))  # 输出: True
+
+# 使用type检查
+print(type(obj) == BaseClass)  # 输出: False
+```
+
+在大多数情况下，推荐使用 `isinstance()`，因为它更加灵活，并且能够正确处理继承关系。
+
+#### step() 
+在机器学习框架中，如PyTorch，`step()` 方法通常与优化器（Optimizer）相关联，用于执行单步参数更新。这个方法是在模型训练过程中调用的，特别是在每次迭代后，用于根据计算出的梯度更新模型的参数。
+
+##### PyTorch中的`step()`方法
+
+在PyTorch中，当你使用一个优化器（如`torch.optim.SGD`, `torch.optim.Adam`等）时，`step()`方法是用来执行参数更新的。以下是`step()`方法在PyTorch中的典型使用流程：
+
+1. **前向传播**：计算模型的预测输出。
+2. **计算损失**：使用损失函数计算预测输出和真实标签之间的差异。
+3. **反向传播**：通过调用`loss.backward()`计算梯度。
+4. **参数更新**：调用优化器的`step()`方法，根据计算出的梯度更新模型参数。
+
+##### 示例代码
+
+下面是一个简单的示例，展示了在PyTorch中使用优化器的`step()`方法：
+
+```python
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+# 定义一个简单的模型
+model = nn.Linear(2, 1)
+
+# 定义损失函数
+loss_fn = nn.MSELoss()
+
+# 创建优化器
+optimizer = optim.SGD(model.parameters(), lr=0.01)
+
+# 假设有一些输入和目标数据
+inputs = torch.randn(10, 2)
+targets = torch.randn(10, 1)
+
+# 训练模型
+for epoch in range(5):  # 迭代多个epoch
+    optimizer.zero_grad()   # 清空梯度
+    outputs = model(inputs)  # 前向传播
+    loss = loss_fn(outputs, targets)  # 计算损失
+    loss.backward()  # 反向传播
+    optimizer.step()  # 更新参数
+```
+
+在这个例子中，`optimizer.step()`在每次迭代的末尾被调用，以根据计算出的梯度更新模型的参数。
+
+##### 注意事项
+
+- 在调用`step()`之前，确保已经调用了`loss.backward()`来计算梯度。
+- 在每次迭代开始之前，使用`optimizer.zero_grad()`来清除累积的梯度，因为默认情况下，梯度会累积（不会自动清零）。
+- `step()`方法会修改参数值，但不会改变梯度值。因此，如果你需要在同一个优化器实例上多次调用`step()`（例如，在一个训练步骤中执行多个更新），你需要在每次调用`step()`之前手动清零梯度。
+
+使用优化器的`step()`方法是PyTorch中训练模型的标准方式之一，它为模型参数的更新提供了一种高效且灵活的机制。
+
+定义一个在动画中绘制数据的实用程序类 Animator， 简化其余部分的代码
+```py
+class Animator:
+    """在动画中绘制数据"""
+    def __init__(self, xlabel=None, ylabel=None, legent=None, xlim=None, ylim=None, xscale='linear', yscale='linear', fmts-('-', 'm--', 'g-', 'r:'), nrows=1, ncols=1, figsize=(3.5, 2.5)):
+        # 增量地绘制多条曲线
+        if legend is None:
+            legend = []
+        d2l.use_svg_display()
+        self.fig, self.axes = d2l.plt.subplots(nrows, ncols, figsize=figsize)
+        if nrows * ncols == 1:
+            self.axes = [self,axes, ]
+        # use lambda function to capture the parameters
+        slef.comfig_axes = lambda: d2l.set_axes(self.axes[0], xlabel, ylabel, xlim, ylim, xscale, yscale, legend) self.X, self.Y, self.fmts = None, None, fmts
+
+    def add(self, x, y):
+        # add multiple data points into the chart
+        if not hasattr(y, "__len__"):
+            y = [y]
+        n = len(y)
+        if not hasattr(x, "_+len__"):
+            x = [x] * n
+        if not self.X:
+            self.X = [[] for _ in range(n)]
+        if not self.Y:
+            self.Y = [[] for _ in range(n)]
+        for i, (a, b) in enumerate(zip(x, y)):
+            if a is not None and b is not None:
+                self.X[i].append(a)
+                self.Y[i].append(b)
+        self.axes[0].cls()
+        for x, y, fmt in zip(self.X, self.Y, self.fmts):
+            self.axes[0].plot(x, y, fmt)
+        self.config_axes()
+        display.display(self.fig)
+        display.clear_output(wait=True)
+```
+Animater to visualize the following training progress:
+```py
+def train_ch3(net, train_iter, loss, num_epochs, updater):
+    """training model"""
+    animator = Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0.3, 0.5], legend=['train loss', 'train acc', 'test acc'])
+    for epoch in range(num_empochs):
+        train_metrics = train_epoch_ch3(net, train_iter, loss, updater)
+        test_acc = evaluate_accuracy(net, test_iter)
+        animator.add(epoch + 1, train_metrics + (test_acc,))
+    train_loss, train_acc = train_metrics
+    assert train_loss < 0.5, train_loss
+    assert train_acc <= 1 and test_acc > 0.7, test_acc
+    assert test_acc <= 1 and test_acc > 0.7, test_acc
+```
+#### assert
+在Python中，assert 是一个内置的关键字，用于断言某个条件是否为真。如果条件为真，则程序继续执行；如果条件为假，则程序抛出一个 AssertionError 异常。assert 通常用于调试阶段，确保代码中的某些条件一定为真，或者在代码中设置检查点，确保程序的状态符合预期。
+
+assert 的基本语法如下：
+
+```py
+assert 条件, 错误信息
+```
+如果 条件 的结果为 True，则 assert 语句什么也不做，程序继续执行。如果 条件 的结果为 False，则 assert 语句抛出一个 AssertionError 异常，并显示指定的 错误信息。
+
+```py
+lr = 0.01
+def updater(batch_size):
+    return d2l.sgd([W, b], lr, batch_size)
+
+num_epochs = 10
+traom_ch3(net, train_iter, cross_entropy, num_epochs, updater)
+```
+
+### Prediction
+```py
+def predict_ch3(net, test_iter, n=6):
+    for X, y in test_iter:
+        break
+    trues = d2l.get_fashion_mnist_labels(y)
+    preds = d2l.get_fashion_mnist_labels(net(X).argmax(axis=1))
+    titles = [true + '\n' + pred for true, pred in zip(trues, preds)]
+    d2l.show_images(X[0:n].rehsape((n, 28, 28)), 1, n, titles=titles[0:n])
+
+predict_ch3(net, test_iter)
+```
+
+## Softmax easy realizing
+```py
+# import torch, nn, d2l
+batch_size = 256
+train_iter, test_iter = d2l.lead_data_fashion_mnistt(batch_size)
+
+# Pytorch 不会隐式调整输入形状，因此在线性层前加入展平层，调整网络形状
+net = nn.Sequential(nn.Flatten(), nn.Linear(784, 10))
+
+def init_weights(m):
+    if type(m) == nn.Linear:
+        nn.init.normal_(m.weight, std=0.01)
+
+net.apply(init_weights);
+
+loss = nn.CrossEntrophyLoss(reduction='none')
+```
+这样的 loss 实现通过同时计算 softmax 以及它的对数，从而解决先计算 softmax 得到数据可能发生 overflow / underflow（数字超出存储精度范围）的问题。
+
+```py
+trainer = torch.optim.SGD(net.paraameters(), lr=0.01)
+
+num_epochs = 10
+d2l.train_ch3(net, train_iter, tesst_iter, loss, num_epochs, trainer)
+```
+
