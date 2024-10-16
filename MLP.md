@@ -398,3 +398,266 @@ net.apply(fn)
 trainer = torch.optim.SGD(net.parameters(), lr=lr)
 d2l.train_ch3(net, train_iter, test_iter, loss, num_epochs, trainer)
 ```
+
+## 数值稳定性和模型初始化
+### gradient vanishing
+sigmoid 会导致梯度消失
+```py
+import matplotlib.pyplot as plt 
+import torch 
+from d2l import torch as d2l
+
+x = torch.arange(-8.0, 8.0, 0.1, requires_grad=True)
+y = torch.sigmoid(x)
+y.backward(torch.ones_like(x))
+d2l.plot(x.detach().numpy(), [y.detach().numpy(), x.grad.numpy()], legent=['sigmoid', 'gradient'], figsize=(4.5, 2.5))
+plt.show()
+```
+超大或者超小时候会梯度消失
+
+### gradient explosion
+```py
+M = torch.normal(0, 1, size=(4,4))
+print('一个矩阵 \n',M)
+for i in range(100):
+    M = torch.mm(M,torch.normal(0, 1, size=(4, 4)))
+print('乘以100个矩阵后\n', M)
+```
+### Solution：参数初始化
+#### 默认初始化
+比如正态分布。未指定模板，框架将使用默认的随机初始化方法。
+#### Xavier 初始化
+假设权重有零均值和方差 $\sigma ^2$. 假设输入层也有零均值和方差 $\gamma ^2$ 且和权重彼此独立。对于输出 $o_i=\sum_{j=1}^{n_{in}}w_{ij}x_j$，有均值和方差为 0 和 $n_{in}\sigma ^2\gamma ^2$ 。
+要保持方差不变设置 $n_{in}\sigma ^ 2=1$ 。反向传播同理，但难以同时满足。
+
+只要满足：
+$$ 0.5(n_{in}+n_{out})\sigma ^2=1$$
+表明对于每一层，输出的方差不受输入数量的影响，任何梯度的方法不受输出数量的影响。
+
+## 环境和分布偏移
+### 分布偏移
+协变量偏移、标签偏移、概念偏移
+$$SEE\ \ \ \ THE\\ ORIGIONAL\\ WEBSITE\\ FOR\\ FURTHER\\  IMFORMATION.$$
+
+### 学习问题的分类法
+批量学习（一批更新一次）、在线学习（一个更新一次）、老虎机、控制理论、强化学习、考虑到环境
+
+## Kaggle: house price prediction
+```py
+import hashlib
+import os
+import tarfile
+import zipfile
+import requests
+
+DATA_HUB = dict()   # 将数据集名车过的字符映射到数据集相关的二元组上
+                    # 二元组包含数据集的url和验证文件完整性的sha-1密钥。
+DATA_URL = 'http://d2l.data.s3_accelerate.amazonaws.com/'
+
+# 下载数据
+def download(name, cache_dir=os.path.join('..', 'data')):
+    """下载一个DATA_HUB中的文件，返回本地文件名"""
+    assert name in DATA_HUB, f"{name} 不存在于 {DATA_HUB}"
+    url, sha1_hash = DATA_HUB[name]
+    os.makedirs(cache_dir, exist_ok=True)
+    fname = os.path.join(cache_dir, url.split('/')[-1])
+    if os.path.exists(fname):
+        sha1 = hashlib.sha1()
+        with open(fname, 'rb') as f:
+            while True:
+                data = f.read(1048576)
+                if not data:
+                    break
+                sha1.update(data)
+        if sha1.hexdigest() == sha1_hash:
+            return fname # 命中缓存
+    print(f'正在从{url}下载{fname}...')
+    r = requests.get(url, stream=True, verify=True)
+    with open(fname, 'wb') as f:
+        f.write(r.content)
+    return fname
+
+
+def download_extract(name, folder=None):
+    """下载并解压zip/tar文件"""
+    fname = download(name)
+    base_dir = os.path.dirname(fname)
+    data_dir, ext = os.path.splitext(fname)
+    if ext == '.zip':
+        fp = zipfile.ZipFile(fname, 'r')
+    elif ext in ('.tar', '.gz'):
+        fp = tarfile.open(fname, 'r')
+    else:
+        assert False, '只有zip/tar文件可以被解压缩'
+    fp.extractall(base_dir)
+    return os.path.join(base_dir, folder) if folder else data_dir
+
+
+def download_all():
+    """下载DATA_HUB中的所有文件""" 
+    for name in DATA_HUB:
+        download(name)
+```
+
+### access dataset
+```py
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+DATA_HUB['kaggle_house_train'] = (  #@save
+    DATA_URL + 'kaggle_house_pred_train.csv',
+    '585e9cc93e70b39160e7921475f9bcd7d31219ce')
+
+DATA_HUB['kaggle_house_test'] = (  #@save
+    DATA_URL + 'kaggle_house_pred_test.csv',
+    'fa19780a7b011d9b009e8bff8e99922a8ee2eb90')
+
+train_data = pd.read_csv(download('kaggle_house_train'))
+test_data = pd.read_csv(download('kaggle_house_test'))
+
+print(train_data.iloc[0:4, [0, 1, 2, 3, -3, -2, -1]])
+
+# 第一个特征是 index，删除：
+all_features = pd.concat((train_data.iloc[:, 1:-1], test_data.iloc[:, 1;]))
+```
+### 数据预处理
+1. 针对数据项：将缺失数据替换为相应特征的平均值。然后压缩到零均值，单位方差。
+$$x \leftarrow \frac{x-\mu}{\sigma}$$
+2. 针对离散特征（类）：用多类别标签 + 0/1 表示（类名_特征名 -> 0/1）
+```py
+# if cannot access testing data, calculate the mean and the sigma according tot he training data.
+numeric_features = all_features.dtypes[all_features.dtypes != 'object'].index
+all_features[numeric_features] = all_features[numeric_features].apply(lambda x: (x - x.mean) / (x.std()))
+# after standardizing all the data, all the means disappear, therefore setting the missing value to zero.
+all_features[numeric_features] = all_features[numeric_features].fillna(0)
+
+# ‘Dummy_na=True’将 na（缺失值）视为有效的特征，并创建指示符特征
+all_features = pd.get_dummies(all_features, dummy_na=True)
+all_features.shape #>>> (2919, 331)
+
+#pandas to numpy
+n_train = train_data.shape[0]
+train_features = torch.tensor(all_features[:n_train].values, dtype=torch.float32)
+test_features = torch.tensor(all_features[n_train:].values, dtype=torch.float32)
+train_labels = torch.tensor(train_data.SalePrice.values.reshape(-1, 1), dtype=torch.float32)
+```
+### Training
+```py
+loss = nn.MESLoss()
+in_features = train_features.shape[1]
+
+def get_net():
+    net = nn.Sequential(nn.Linear(in_features, 1))
+    return net
+```
+我们关心的是相对误差，而不是绝对误差。这会基于结果的数量级而保持稳定.
+可以用价格预测的对数来衡量差异。
+将$\delta for |logy-log\hat y| ≤ \delta$ 转换为 $e^{-\delta}≤\frac{\hat y}{y}≤e^\delta$
+
+用以下均方根误差：
+$$(\frac{1}{n}\sum_{i=1}^{n}(logy_i-log\hat y_i)^2)^{0.5}$$
+```py
+def log_rmse(net, features, labels):
+    # 为了在取对数时进一步稳定该值，将小于1的值设为1
+    clipped_preds = torch.clamp(net(features), 1, float('inf'))
+    rmse = torch.sqrt(loss(torch.log(clipped_preps), torch.log(labels)))
+    return rmse.item()
+```
+#### torch.clamp() $\rightarrow$ clamping
+`torch.clamp` 是 PyTorch 中的一个函数，它用于将输入张量（tensor）的每个元素限制在指定的范围内。如果元素的值小于范围的下限，它将被设置为下限值；如果元素的值大于范围的上限，它将被设置为上限值；如果元素的值在范围之内，则保持不变。
+
+函数的基本语法如下：
+
+```python
+torch.clamp(input, min, max)
+```
+
+- `input` 是需要被限制值的输入张量。
+- `min` 是限制的下限值，可以是一个数值（标量）或与 `input` 形状相同的张量。
+- `max` 是限制的上限值，同样可以是一个数值（标量）或与 `input` 形状相同的张量。
+
+`min` 和 `max` 参数也可以省略，此时你可以只提供 `min` 或 `max` 中的一个，另一个将默认为负无穷或正无穷。
+
+使用 Adam 优化器，对初始学习率不那么敏感。
+```py
+def train(net, train_features, train_labels, test_features, test_labels, num_epochs, learning_rate, weight_decay, batch_size):
+    train_ls, test_ls = [], []
+    train_iter = d2l.load_array((train_features, train_labels), batch_size)
+    # Adam optimizer
+    optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    for epoch in range(num_epochs):
+        for X, y in train_iter:
+            optimizer.zero_grad()
+            l = loss(net(X), y)
+            l.backward()
+            optimizer.step()
+        train_ls.append(log_rmse(net, train_features, train_labels))
+        if test_labels is not None:
+            test_ls.append(log_rmse(net, test_features, test_labels))
+    return train_ls, test_ls
+```
+
+### K折交叉验证
+```py
+def get_k_fold_data(k, i, X, y):
+    assert k > 1
+    fold_size = X.shape[0] // k
+    X_train, y_train = None, None
+    for j in range(k):
+        idx = slice(j * fold_size, (j + 1) * fold_size)
+        X_part, y_part = X[idx, :], y[idx]
+        if j == i:
+            X_valid, y_valid = X_part, y_part
+        elif X_train is None:
+            X_train, y_train = X_part, y_part
+        else:
+            X_train = torch.cat([X_train, X_part], 0)
+            y_train = torch.cat([y_train, y_part], 0)
+
+def k_fold(k, X_train, y_train, num_epochs, learning_rate, weight_decay, batch_size):
+    train_l_sum, valid_l_sum = 0, 0
+    for i in range(k):
+        data = get_k_fold_data(k, i, X_train, y_train)
+        net = get_net()
+        train_ls, valid_ls = train(net, *data, num_epochs, learning_rate, weight_dacay, batch_size)
+        train_l_sum += train_ls[-1]
+        valid_l_sum += valid_ls[-1]
+        if i == 0:
+            d2l.plot(list(range(l, num_epochs + 1)), [train_ls, valid_ls], xlabel='epoch', ylabe;='rmse', xlim=[1, num_epochs], legend=['train', 'valid'], yscale='log')
+        print(f'fold{i+1}, train log rmse{float(train_ls[-1]):f}, 'f'test log rmse{float(valid_ls[-1]):f}')
+    return train_l_sum / k, valid_l_sum / k
+
+k, nnum_epochs, weight_decay, batch_size = 5, 100, 5, 0, 64
+train_l, valid_l = k_fold(k, train_features, train_labels, num_epochs, lr, weight_dacay, batch_size)
+print(f'{k}-折验证: 平均训练log rmse: {float(train_l):f}, 'f'平均验证log rmse: {float(valid_l):f}')
+```
+有时一组超参数的训练误差可能非常低，但K折交叉验证的误差要高得多。这说明模型过拟合了。
+
+### 提交预测模型
+在K折知道了要选择怎样的超参数后，可以使用所有数据对其进行训练。
+```py
+def train_and_pred(train_features, test_features, train_labels, test_data, num_epochs, lr, weight_decay, batch_size):
+    net = get_net()
+    train_ls, _ = train(net, train_features, train_labels, None, None, num_epochs, lr, weight_decay, batch_size)
+    d2l.plot(np.arange(1, num_epochs + 1), [train_ls], xlabel='epoch', ylabel='log rmse', xlim=[1, num_epochs], yscale='log')
+print(f'训练log rmse:{float(train_ls[-1]):f}')
+# 将网络应用于测试集。
+preds = net(test_features).detach().numpy()
+# 将其重新格式化以导出到Kaggle
+test_data['SalePrice'] = pd.Series(preds.reshape(1, -1)[0])
+submission = pd.concat([test_data['Id'], test_data['SalePrice']], axis=1) 
+submission.to_csv('submission.csv', index=False)
+train_and_pred(train_features, test_features, train_labels, test_data, num_epochs, lr, weight_decay, batch_size)
+```
+
+
+
+
+
+
+
+
