@@ -46,7 +46,27 @@ class MySequential(nn.Module):
             X = block(X)
         return X        # 牛逼啊这样简单
 ```
-
+### 在向前传播函数中执行代码
+有时希望合并既不是上一层的结果也不是可更新参数的项。
+```py
+class FixedHiddenMLP(nn.Moduel):
+    def __init__(self):
+        super().__init__()
+        # 不计算梯度的随即权重参数。因为其在训练期间保持不变
+        self.rand_weight = torch.rand((20, 20), requires_grad=False)
+        self.linear = nn.Linear(20, 20)
+    def forward(self, X):
+        X = self.linear(X)
+        # 使用创建的常量参数以及relu和mm函数
+        X = F.relu(torch.mm(X, self.rand_weight) + 1) # matmul
+        # 复用全连接层。这相当于两个全连接层共享参数
+        X = self.linear(X)
+        # control flow
+        hwile X.abs().sum() > 1:
+        X /= 2
+        reutnr X.sum()
+```
+这个 X 权重不是一个模型参数，永远不会被反向传播更新。
 
 
 
