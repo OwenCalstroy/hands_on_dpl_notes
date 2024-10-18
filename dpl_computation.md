@@ -174,9 +174,141 @@ net[0].weight.data[0, 0] = 42
 net[0].weight.data[0]
 ```
 
+### 参数绑定
+在多个层之间共享参数
+```py
+# 给共享层一个名称以便引用参数
+shared = nn.Linear(8, 8)
+net = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), shared, nn.ReLU(), shared, nn.ReLU(), nn.Linear(8, 1))
+net(X)
+# test whether the parameters are the same
+print(net[2].weight.data[0] == net[4].weight.data[0])
 
+# make sure that they are actually one subject, not only having the same value !!!!!!!!!!!
+net[2].weight.data[0, 0] = 100
+print(net[2].weight.data[0] == net[4].weight.data[0])
+```
 
+## 延后初始化
+在实例化时，未初始化任何参数，等到之后直到所有参数的形状才初始化参数。
 
+## 自定义层
+### 不带参数的层
+```py
+import torch
+import torch.nn.functional as F
+from torch import nn
 
+class CenteredLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
 
+    def forward(self, X):
+        return X - X.mean()
 
+Y = net(torch.rand(4, 8))
+Y.mean()
+```
+### 定义带参数的层
+```py
+class MyLinear(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(in_units, units))
+        self.bias = nn.Parameter(torch.randn(units,))
+
+    def forward(self, X):
+        linear = torch.matmul(X, self.weight.data) + self.bias.data
+        return F.relu(linear)
+```
+
+## 读写文件
+定期保存中间结果
+### 加载和保存张量
+```py
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+x = torch.arange(4)
+torch.save(x, 'x-file')
+x2 = torch.load('x-file')
+
+# 还可以以下形式
+y = torch.zeros(4)
+torch.save([x, y], 'x-files')
+
+dict = {'x':x, 'y':y}
+torch.save(dict, 'x-files')
+```
+### 加载和保存模型参数
+只能保存参数而不能保存整个模型。为了恢复模型，需要用代码生成架构，然后从磁盘加载参数。
+```py
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.hidden = nn.Linear(20, 256)
+        self.output = nn.Linear(256, 10)
+
+    def forward(self, x):
+        return self.output(F.relu(self.hidden(x)))
+
+net = MLP()
+X = torch.randn(size=(2, 20))
+Y = net(X)
+
+torch.save(net.state_dict(), 'mlp.params')
+
+clone = MLP()
+clone.load_state_dict(torch.load('mlp.params'))
+clone.eval()
+```
+
+## GPU
+### 计算设备
+```py
+import torch
+from torch import nn
+torch.device('cpu'), torch.device('cuda'), torch.device('cuda:1')
+torch.cuda.device_count()
+
+def try_gpu(i=0): #@save 
+    """如果存在，则返回gpu(i)，否则返回cpu()""" 
+    if torch.cuda.device_count() >= i + 1:
+        return torch.device(f'cuda:{i}')
+    return torch.device('cpu')
+def try_all_gpus(): #@save 
+    """返回所有可用的GPU，如果没有GPU，则返回[cpu(),]""" 
+    devices = [torch.device(f'cuda:{i}') for i in range(torch.cuda.device_count())]
+    return devices if devices else [torch.device('cpu')]
+try_gpu(), try_gpu(10), try_all_gpus()
+```
+
+### 张量与GPU
+
+```py
+# 查询张量所在的设备
+x = torch.tensor([1, 2, 3])
+x.device
+
+# save on GPU
+X = torch.ones(2, 3, device=try_gpu())
+X = torch.ones(2, 3, device=try_gpu(0))
+
+# need copy X when X and Y on different GPUs and requires X+Y
+Z = X.cuda(1)
+print(X)
+print(Z)
+# now can plus Z, Y
+Y + Z
+Z.cuda(1) is Z        # True
+```
+人们使用GPU来进行机器学习，因为单个GPU相对运行速度快。但是在设备(CPU、GPU和其他机器)之间 传输数据比计算慢得多。这也使得并行化变得更加困难，因为我们必须等待数据被发送(或者接收)，然后 才能继续进行更多的操作。这就是为什么拷贝操作要格外小心。
+
+### nn & gpu
+nn 也可指定 gpu
+```py
+net = nn.Sequential(nn.Linear(3, 1))
+net = net.to(device=try_gpu())
+```
+要确认所有数据和参数都在同一个设备上。
