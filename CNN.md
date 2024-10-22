@@ -83,7 +83,7 @@ Initialize the convolutional kernel randomly. Check square root loss.
 # construct a 2d kernel layer. Only one tunnel
 conv2d = nn.Conv2d(1, 1, kernal_size=(1, 2), bias=False)
 
-# this 2d convolutional kernel uses a four dimention input and output.(batch size, tunnels, height, length)
+# this 2d convolutional kernel uses a four dimention input and output.(batch size, channels, height, length)
 X = X.reshape((1, 1, 6, 8))
 Y = Y.reshape((1, 1, 6, 7))
 lr = 3e-2
@@ -92,7 +92,7 @@ for i in range(10):
     l = (Y_hat - Y) ** 2
     conv2d.zero_grad()
     l.sum().backward()
-    #iterate the convolutional kernel
+    # iterate the convolutional kernel
     conv2d.weight.data[:] -= lr * conv2d.weight.grad
     if (i + 1) % 2 == 0:
         print(f'epoch {i+1}, loss {l.sum():.3f}')
@@ -113,3 +113,104 @@ conv2d.weight.data.reshape((1, 2))
 9. `padding_mode`：填充模式，可以是 'zeros', 'reflect', 'replicate' 或 'circular'。默认为 'zeros'。
 
 这些参数共同定义了卷积层的行为，包括如何对输入数据进行卷积操作以及卷积核的配置。通过调整这些参数，可以改变卷积层的学习能力和输出特征图的大小。
+
+
+## Padding and stride
+padding the edge with zero element.
+```py
+# create a function to pad zeros
+def comp_conv2d(conv_2d, X):
+    # batchsize=1, channel=1
+    X = X.reshape((1, 1) + X.shape)
+    Y = conv2d(X)
+    # omit first two dim - batchsize, channel
+    return Y.reshape(Y.shape[2:])
+
+conv2d = nn.Conv2d(1, 1, kernel_size=3, padding=1)
+X = torch.rand(size=(8, 8))
+print(comp_conv2d(conv2d, X).shape)
+
+# padding=(height, length) -> (row, column)
+conv2d = nn.Conv2d(1, 1, kernel_size=(5, 3), padding=(2, 1))
+```
+### Stride
+the number of the elements slid at a time -> stride.
+```py
+conv2d = nn.Conv2d(1, 1, kernel_size=3, padding=(2, 1), stride=(2, 1))
+```
+
+## Multi-inputs and Multi-outputs channel
+### multi-inputs
+输出后的多 channel 对应数位 (i, j) 相加 -> 1 channel
+```py
+# one channel K ---apply--> X's channels
+def coor2d_multi_in(X, K):
+    return sun(d2l.coor2d(x, k) for x, k in zip(X, K))  # zip
+```
+### multi_outputs
+不同通道是对不同特征的响应。对不同的通道给出不同的 kernel.
+```py
+# K's channels ---apply--> X's channels
+def coor2d_multi_in_out(X, K):
+    return torch.stack([coor2d_multi_in(X, k) for k in K], 0)
+
+K = torch.stack((K, K+1, K+2), 0)
+print(K.shape)
+```
+#### torch.stack()
+参数：
+
+- tensors：一个序列（如列表或元组）的张量，它们需要有相同的形状。
+
+- dim：沿着哪个维度进行堆叠。默认为0，即在最前面添加一个新的维度。
+
+### 1 * 1 convolutional kernel
+In this situation, the only calculation happens on the channel dimension.
+```py
+def corr2d_multi_in_out_1x1(X, K):
+    c_i, h, w = X.shape
+    c_o = K.shape[0]
+    X = X.reshape((c_i, h*w))
+    K = K.reshape((c_o, c_i))
+    Y = torch.matmul(K, X)
+    return Y.reshape((c_o, h, w))
+
+# 等价于 corr2d_multi_in_out
+```
+
+## 汇聚层 Pooling
+最后一层输入全局敏感，逐渐聚合信息。双重目的：
+- 降低卷积层对位置的敏感性
+- 降低对空间降采样表示的敏感性。
+
+汇聚层也有固定形状，按 stride 移动。但是不包含参数。通常计算汇聚窗口中所有元素的最大值或者平均值（maximum pooling / average pooling）。如此即使平移也不会影响结果
+
+汇聚窗口形状为 p\*q 的汇聚层称为 p\*q 汇聚层。
+```py
+def pool2d(X, pool_size, mode='max):
+    p_h, p_w = pool_size
+    Y = torch.zeros((X.shape[0] - p_h + 1, X.shape[1] - p_w + 1))
+    for i in range(Y.shape[0]):
+        for j in range(Y.shape[1]):
+            if mode = 'max':
+                Y[i, j] = X[i:i + p_h, j : j + p_w].max()
+            if mode = 'avg':
+                Y[i, j] = X[i:i + p_h, j : j + p_w].mean()    
+    return Y
+
+X = torch.tensor([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]])
+pool2d(X, (2, 2))
+
+pool2d = nn.MaxPool2d((2, 3), stride=(2, 3), padding=(0,1))
+
+
+
+
+
+
+
+
+
+
+
+
