@@ -334,7 +334,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
         net.train()
         for i, (X, y) in enumerate(train_iter):
             timer.start()
-            optimizer.zero_grad()
+            optimizer.zero_grad()           # 直接把存在“参数.grad”里的所有梯度清零了，
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
             l = loss(y_hat, y)
