@@ -201,9 +201,33 @@ def pool2d(X, pool_size, mode='max):
 X = torch.tensor([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]])
 pool2d(X, (2, 2))
 
-pool2d = nn.MaxPool2d((2, 3), stride=(2, 3), padding=(0,1))
+pool2d = nn.MaxPool2d((2, 3), stride=(2, 3), padding=(0,1)) 
+```
 
+## 卷积神经网络 LeNet
+用卷积层代替展开为一维向量：可以保留空间结构，同时模型更简洁，所需的参数更少。
 
+总体来看，LeNet（LeNet-5）由两个部分组成：
+- 卷积编码器：由两个卷积层组成；
+- 全连接层密集块：由三个全连接层组成。
+
+FRAME: conv 6@28\*28 $\rightarrow$ pooling 6@14\*14 $\rightarrow$ conv 16@10\*10 $\rightarrow$ pooling 16@5\*5 $\rightarrow$ full-connecting \* 3 $\rightarrow$ output
+
+```py
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+net = nn.Sequencial(nn.Conv2d(1, 6, kernal_size=5, padding=2), nn.Sigmoid(),
+                     nn.AvgPool2d(kernel_size=2, stride=2),
+                     nn.Conv2d(6, 16, kernel_size=5), nn.Sigmoid(),
+                     nn.AvgPool2d(kernel_size=5, stride=2),
+                     nn.Flatten(),      # very important
+                     nn.Linear(16*5*5, 120), nn.Sigmoid(),
+                     nn.Linear(120, 84), nn.Sigmoid(),
+                     nn.Linear(84, 10), nn.Sigmoid())
+
+X = torch.rand(size=(1, 1, 28, 28), dtype=torch.float32)
 
 
 
