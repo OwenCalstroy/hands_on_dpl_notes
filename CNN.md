@@ -340,7 +340,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             l = loss(y_hat, y)
             l.backward()
             optimizer.step()
-            with torch.no_grad():
+            with torch.no_grad():           # 暂时禁用梯度计算
                 metric.add(l*X.shape[0], d2l.accuracy(y_hat, y), X.shape[0])
             timer.stop()
             train_l = metric[0] / metric[2]
