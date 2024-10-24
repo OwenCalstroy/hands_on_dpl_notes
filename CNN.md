@@ -228,9 +228,133 @@ net = nn.Sequencial(nn.Conv2d(1, 6, kernal_size=5, padding=2), nn.Sigmoid(),
                      nn.Linear(84, 10), nn.Sigmoid())
 
 X = torch.rand(size=(1, 1, 28, 28), dtype=torch.float32)
+for layer in net:
+    X = layer(X)
+    print(layer.__class__.__name__, 'output shape: \t', X.shape)
+```
+### LeNet on Fashion-MNIST Dataset
+```py
+batch_size = 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size=batch_size)
+```
+虽然卷积神经网络的参数较少，但计算成本仍然很高，因为每个参数都参与更多的乘法。通过GPU可以加快训练。
 
+在模型使用GPU计算数据集之前，我们需要将其复制到显存中。
+```py
+def evaluate_accuracy_gpu(net, data_iter, device=None):
+    if isinstance(net, nn.Module):
+        net.eval()  # set to evaluating mode
+        if not device:
+            device = next(iter(net.parameters())).device
+    metric = d2l.Accumulator(2)
+    with torch.no_grad():
+        for X, y in data_iter:
+            if isinstance(X, list):
+                # BERT 微调所需的
+                X = [x.to(device) for x in X]
+            else:
+                X = X.to(device)
+            y = y.to(device)
+            metric.add(d2l.accuracy(net(X), y), y.numel())
+    return metric[0] / metric[1]
+```
+#### net.eval()
+在PyTorch中，`net.eval()` 是一个非常重要的函数，它用于将模型设置为评估模式。当你调用 `net.eval()` 时，模型会禁用一些在训练时使用但在评估时不需要的层，比如 Dropout 和 Batch Normalization。这些层在训练时有助于防止过拟合和加速收敛，但在模型评估或推理时，我们希望使用固定的参数来确保结果的一致性。
 
+以下是 `net.eval()` 的一些关键点：
 
+1. **禁用 Dropout**：在训练时，Dropout 层会随机地关闭一些神经元，以防止模型过拟合。但在评估模式下，我们希望所有的神经元都参与前向传播，因此 Dropout 层会被禁用。这意味着在评估时，所有的神经元都会激活，而不是像训练时那样以一定的概率被丢弃。
+
+2. **改变 Batch Normalization 行为**：Batch Normalization 层在训练时会计算每个 mini-batch 的均值和方差，并使用这些统计数据来规范化层的输入。然而，在评估模式下，由于我们通常对单个样本进行推理，而不是整个 mini-batch，因此会使用训练期间计算的全局均值和方差，而不是单个样本的统计数据。这有助于保持模型在训练和评估时行为的一致性。
+
+3. **不跟踪梯度**：在评估模式下，模型在前向传播中不再跟踪梯度，这可以减少内存消耗，并且不会进行参数更新。
+
+4. **提高推理速度**：由于在评估模式下不进行梯度计算，这可以加速模型的推理过程。
+
+在实际使用中，当你完成模型的训练并准备对其进行评估或进行预测时，你应该确保调用 `net.eval()` 来设置正确的模式。这通常与 `torch.no_grad()` 上下文管理器一起使用，以进一步优化推理过程并减少内存使用。
+
+例如，如果你正在评估一个模型，你应该这样写代码：
+
+```python
+model.eval()  # 设置模型为评估模式
+with torch.no_grad():  # 关闭梯度计算
+    outputs = model(inputs)  # 进行预测或评估
+```
+
+总之，`net.eval()` 是 PyTorch 中一个非常有用的函数，它确保了模型在评估和推理时使用正确的行为，从而保证了模型性能的稳定性和准确性。
+
+#### .numel()   （回忆） -> number of elements
+在 PyTorch 中，y.numel() 是一个方法，用于返回张量 y 中元素的总数。这个方法非常直接，它会计算张量中所有元素的数量，不考虑张量的维度。
+
+例如，如果你有一个张量 y，它的形状是 (3, 4, 5)，那么 y.numel() 将会返回 3 * 4 * 5 = 60，因为总共有60个元素。
+
+#### Xavier
+在PyTorch中，Xavier初始化（也称为Glorot初始化）是一种权重初始化方法，旨在保持激活函数的方差在网络的前向传播和反向传播过程中大致相同，以避免梯度消失或梯度爆炸的问题。这种方法是由Xavier Glorot和Yoshua Bengio在2010年提出的。
+
+Xavier初始化的数学原理基于这样一个观察：如果输入和权重都是零均值的高斯分布，那么线性组合的方差将是输入方差和权重方差的乘积。为了保持每一层的输出方差接近于其输入方差，Xavier初始化建议设置权重的初始方差为：
+
+\[ \text{Var}(w) = \frac{2}{n_{\text{in}} + n_{\text{out}}} \]
+
+其中 \( n_{\text{in}} \) 是输入单元的数量，\( n_{\text{out}} \) 是输出单元的数量。这样，无论 \( n_{\text{in}} \) 和 \( n_{\text{out}} \) 的大小如何，这一层的输出方差都接近于其输入方差。
+
+在PyTorch中，可以使用`torch.nn.init`模块中的`xavier_uniform_`或`xavier_normal_`函数来应用Xavier初始化。`xavier_uniform_`使用均匀分布，而`xavier_normal_`使用正态分布。以下是如何在PyTorch中使用Xavier初始化的示例：
+
+```python
+import torch
+import torch.nn as nn
+
+# 假设我们有一个简单的全连接层
+fc_layer = nn.Linear(in_features=256, out_features=512)
+
+# 应用Xavier均匀初始化
+nn.init.xavier_uniform_(fc_layer.weight)
+
+# 或者应用Xavier正态初始化
+# nn.init.xavier_normal_(fc_layer.weight)
+```
+
+在这段代码中，`fc_layer`是一个全连接层，它有256个输入特征和512个输出特征。通过调用`xavier_uniform_`或`xavier_normal_`，我们可以将Xavier初始化应用到该层的权重上。这种初始化方法特别适用于激活函数是线性的情况，比如tanh或sigmoid。然而，对于ReLU激活函数，Xavier初始化可能不是最佳选择，因为它的推导是基于激活函数是线性的假设，而ReLU是非线性的。
+
+我们调用Xavier进行随机初始化。
+```py 
+def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
+    """use GPU to train models"""
+    def init_weights(m):
+        if type(m) == nn.Linear or type(m) == nn.Conv2d:
+            nn.init.xavier_uniform_(m.weight)
+    net.apply(init_weights)
+    print('training on', device)
+    net.to(device)
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr)
+    loss = nn.CrossEntropyLoss()
+    animator = d2l.Animator(xlabel='epoch', xlim=[1, num_epochs], legend=['tarin loss', 'train acc', 'test acc'])
+    timer, num_batches = d2l.Timer(), len(train_iter)
+    for epoch in range(num_epochs):
+        metric = d2l.Accumulator(3)
+        net.train()
+        for i, (X, y) in enumerate(train_iter):
+            timer.start()
+            optimizer.zero_grad()
+            X, y = X.to(device), y.to(device)
+            y_hat = net(X)
+            l = loss(y_hat, y)
+            l.backward()
+            optimizer.step()
+            with torch.no_grad():
+                metric.add(l*X.shape[0], d2l.accuracy(y_hat, y), X.shape[0])
+            timer.stop()
+            train_l = metric[0] / metric[2]
+            train_acc = metric[1] / metric[2]
+            if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
+                animator.add(epoch + (i + 1) / num_batches, (train_l, train_acc, None))
+                test_acc = evaluate_accuracy_gpu(net, test_iter)
+                animator.add(epoch+1, (None, None, test_acc))
+            print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, teat acc {test_acc:.3f}')
+            print(f'{metric[2]*num_epochs/timer.sum():.1f} examples/sec on {str(device)}')
+
+lr, num_epochs = 0.9, 10
+train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
 
 
 
