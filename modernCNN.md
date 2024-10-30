@@ -56,3 +56,42 @@ SVM的优化问题可以表示为一个凸二次规划问题，这保证了找�
 ### 学习表征
 认为特征本身应该被学习。
 ### AlexNet
+模型设计：通道数多（比LeNet多10倍）；双数据流设计，每个 GPU 负责一般的存储和计算模型的工作。
+
+激活函数：ReLU。更简单，不会出现梯度消失。
+
+容量控制和预处理：暂退法。训练时增加了大量的图像增强数据（反转、平移等），更健壮，减少过拟合。
+
+```py
+import torch
+from torch import nn
+from d2l import torch as d2l
+
+net = nn.Sequencial(nn.Conv2d(1, 96, kernel_size=5, stride=4, padding=1), nn.ReLU(), nn.MaxPool2d(kernel_size=5, padding=2), nn.Conv2d(96, 256, kernel_size=5, padding=2), nn.ReLU(), nn.MaxPool2d(kernel_size=3, stride=2), nn.Conv2d(256, 384, kernel_size=3, padding=1), nn.ReLU(), nn.Conv2d(384, 384, kernel_size=3, padding=1), nn.ReLU(), nn.Conv2d(384, 256, kernel_size=3, padding=1), nn.ReLU(), nn.MaxPool2d(kernel_size=3, stride=2), nn.Flatten(), nn.Linear(6400, 4096), nn.ReLU(), nn.Dropout(p=0.5), nn.Linear(4096, 4096), nn.ReLU(), nn.Dropout(p=0.5), nn.Linear(4096, 10))
+
+X = torch.randn(1, 1, 224, 224)
+for layer in net:
+    X=layer(X)
+    print(layer.__class__.__name__, 'output shape:\t', X.shape)
+```
+
+### 读取数据集
+由于原始分辨率 28\*28 小于 AlexNet 所需要的，因此把它增加到 224\*224（尽管不合法）。
+```py
+batch_size=128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
+```
+
+### 训练
+```py
+lr, nuim_epochs = 0.01, 10
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, l2, d2l.try_gpu())
+```
+
+
+
+
+
+
+
+
