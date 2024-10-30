@@ -88,6 +88,60 @@ lr, nuim_epochs = 0.01, 10
 d2l.train_ch6(net, train_iter, test_iter, num_epochs, l2, d2l.try_gpu())
 ```
 
+## 使用块的网络（VGG）
+### VGG 块
+经典卷积神经网络的基本组成部分是下面序列：
+1. 带填充以保持分辨率的卷积层
+2. 非线性激活函数，如 ReLU
+3. 汇聚层，池化
+和一个VGG块类似
+```py
+# import stuff
+def vgg_block(num_convs, in_channels, out_channels):
+    layers = []
+    for _ in range(num_convs):
+        layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1))
+        layers.append(nn.ReLU())
+        in_channels = out_channels
+    layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+    return nn.Sequential(*layers)       # trick
+
+conv_arch = ((1, 64), (1, 128), (2, 256), (2, 512), (2, 512))
+
+def vgg(conv_arch):
+    conv_blks = []
+    in_channels = 1
+    # 卷积层部分
+    for (num_convs, out_channels) in conv_arch:
+        conv_blks.append(vgg_block(num_convs, in_channels, out_channels))
+        in_channels = out_channels
+
+    return nn.Sequential(*conv_blks, nn.Flatten(), nn.Linear(out_channels * 7 * 7, 4096), nn.ReLU(), nn.Dropout(0.5), nn.Linear(4096, 4096), nn.ReLU(), nn.Dropout(0.5), nn.Linear(4096, 10))
+
+net = vgg(conv_arch)
+
+X = torch.rand(size=(1, 1, 224, 224))
+for blk in net:
+    X = blk(X)
+    print(blk.__class__.__name__, 'output shape:\t', X.shape)
+```
+
+### 训练模型
+构建一个通道数较少的网络，足够用于训练 Fashion-MNIST
+```py
+ratio = 4
+small_conv_arch = [(pair[0], pair[1] // ratio) for pair in conv_arch]
+net = vgg(small_conv_arch)
+
+lr, num_epochs, batch_size = 0.05, 10, 128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
+
+
+
+
+
 
 
 
