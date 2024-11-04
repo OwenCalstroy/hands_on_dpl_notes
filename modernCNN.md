@@ -138,10 +138,45 @@ train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
 d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
 ```
 
+## 网络中的网络 NiN
+其中加入两个 kernel_conv = 1*1 的层，充当 ReLU的逐像素全连接层。
+```py
+# import stuff
+def nin_block(in_channels, out_channels, kernel_size, strides, padding):
+    return nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size, strides, padding),
+        nn.ReLU(),
+        nn.Conv2d(out_channels, out_channels, kernel_size=1), nn.ReLU(),
+        nn.Conv2d(out_channels, out_channels, kernel_size=1), nn.ReLU())
+```
+NiN 和 AlexNet 之间的一个显著区别是 NiN 完全取消了全连接层。
 
+用一个NiN块，输出通道数=类别数量，最后放全局平均汇聚层，生成对数几率。减少参数数量。
+```py
+net = nn.Sequential(nin_block(1, 96, kernel_size=11, strides=4, padding=0),
+        nn.MaxPool2d(3, stride=2),
+        nin_block(96, 256, kernel_size=5, strides=1, padding=2),
+        nn.MaxPool2d(3, stride=2),
+        nin_block(256, 384, kernel_szie=3, strides=1, padding=1),
+        nn.MaxPool2d(3, stride=2),
+        nn.Dropout(0.5),
+        nin_block(384, 10, kernel_size=3, strides=1, padding=1),  # label_num = 10
+        nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten())
 
+X = torch.rand(size=(1, 1, 224, 224))
+for layer in net:
+    X = layer(X)
+    print(layer.__class__.__name__, 'output shape:\t', X.shape)
+```
+#### AdaptiveAvgPool2d
+自适应平均池化（Adaptive Average Pooling）是一种深度学习中的操作，它可以将任意大小的输入特征图转换为固定大小的输出特征图。其工作原理是通过计算输入特征图的尺寸和输出尺寸，动态地确定池化核的大小和步长，而不是使用固定的池化窗口。这种池化层对于处理不同尺寸的输入非常有用，特别是在需要将特征图调整到特定尺寸以匹配全连接层或其他层的大小时。
 
-
+```py
+# training
+lr, num_epochs, batch_size = 0.1, 10, 128
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=224)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
 
 
 
