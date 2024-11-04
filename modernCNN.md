@@ -270,10 +270,31 @@ d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
 • GoogLeNet和它的后继者们一度是ImageNet上最有效的模型之一：它以较低的计算复杂度提供了类似
 的测试精度。
 
+## Batch normalization
+批量规范化应用于单个可选层（也可以应用到所有层），其原理如下：在每次训练迭代中，我们首先规范化输入，即通过减去其均值并除以其标准差，其中两者均基于当前小批量处理。接下来，我们应用比例系数和比例偏移。正是由于这个基于批量统计的标准化，才有了批量规范化的名称。
 
+如果我们尝试使用大小为1的小批量应用批量规范化，我们将无法学到任何东西。这是因为在减去均
+值之后，每个隐藏单元将为0。所以，只有使用足够大的小批量，批量规范化这种方法才是有效且稳定的。
 
+从形式上来说,用 $x\in\mathcal{B}$ 表示一个来自小批量 $\mathcal{B}$ 的输入,批量规范化 BN根据以下表达式转换 x:
 
+$$BN(x)=\gamma\odot\frac{x-\hat{\mu}_{\mathcal{B}}}{\hat{\sigma}_{\mathcal{B}}}+\beta.\qquad(7.5.1)$$
 
+在(7.5.1)中, $\hat{\mu}_{\mathcal{B}}$ 是小批量 $\mathcal{B}$ 的样本均值, $\hat{\sigma}_{\mathcal{B}}$ 是小批量 $\mathcal{B}$ 的样本标准差。应用标准化后,生成的小批量的平均值为 0和单位方差为 1。由于单位方差(与其他一些魔法数)是一个主观的选择,因此我们通常包含拉伸参数(scale) $\gamma$ 和偏移参数(shift) $\beta$,它们的形状与 x相同。请注意, $\gamma$ 和 $\beta$ 是需要与其他模型参数一起学习的参数。由于在训练过程中,中间层的变化幅度不能过于剧烈,而批量规范化将每一层主动居中,并将它们重新调整为给定的平均值和大小 $\left(\right.$ 通过 $\left.\hat{\mu}_{\mathcal{B}}\right.$ 和 $\left.\hat{\sigma}_{\mathcal{B}}\right)$。
+
+从形式上来看,我们计算出(7.5.1)中的 $\hat{\mu}_{\mathcal{B}}$ 和 $\hat{\sigma}_{\mathcal{B}}$,如下所示:
+
+$$
+\begin{align*}
+&\hat{\mu}_{\mathcal B}=\frac{1}{|\mathcal B|}\sum_{x\in\mathcal B} x,\\
+&\hat{\sigma}_{\mathcal B}^2=\frac{1}{|\mathcal B|}\sum_{x\in\mathcal B}\left(x-\hat{\mu}_{\mathcal B}\right)^2+\epsilon.
+\end{align*}
+\qquad(7.5.2)
+$$
+
+请注意,我们在方差估计值中添加一个小的常量 $\epsilon>0$, 以确保我们永远不会尝试除以零
+
+卷积层：对每个通道都进行规范化。全连接层：先规范化后激活函数。
 
 
 
