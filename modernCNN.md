@@ -296,6 +296,136 @@ $$
 
 卷积层：对每个通道都进行规范化。全连接层：先规范化后激活函数。
 
+### Starting from scratch
+```py
+# import
+
+def batch_norm(X, gamma, beta, moving_mean, moving_var, eps, momentum):
+    # 通过is_grad_enabled来判断当前模式是训练模式还是预测模式
+    if not is_grad_enabled():
+        # 如果是在预测模式下，直接使用传入的移动平均所得的均值和方差
+        X_hat = (X - moving_mean) / torch.sqrt(moving_var + eps)
+    else:
+        assert len(X.shape) in (2, 4)
+        if len(X.shape) == 2:
+            # 使用全连接层的情况，计算特征维上的均值和方差
+            mean = X.mean(dim=0)
+            var = ((X - mean) ** 2).mean(dim=0)
+        else:
+            # 使用二维卷积层的情况，计算通道维上（axis=1）的均值和方差。
+            # 这里我们需要保持X的形状以便后面可以做广播运算
+            mean = X.mean(dim=(0, 2, 3), keepdim=True)          
+            var = ((X - mean) ** 2).mean(dim=(0, 2, 3), keepdim=True)
+        # 训练模式下，用当前的均值和方差做标准化
+        X_hat = (X - mean) / torch.sqrt(var + eps)
+        # 更新移动平均的均值和方差
+        moving_mean = momentum * moving_mean + (1.0 - momentum) * mean
+        moving_var = momentum * moving_var + (1.0 - momentum) * var
+    Y = gamma * X_hat + beta # 缩放和移位
+    return Y, moving_mean.data, moving_var.data
+```
+#### 有关 moving_mean, moving_var:
+在每一批次（batch）的训练过程中，Batch Normalization 会计算均值 (mean) 和 标准差 (variance)，用于对输入数据进行归一化。
+
+在推理（inference）阶段，模型不再接受小批量数据作为输入，而是一个单一的数据点。因此，Batch Normalization 需要依赖训练过程中累积的统计信息，而不是当前小批量的均值和方差。
+
+注意！batch normalization 是在同一个 batch 内所有输入矩阵 X 对应位置 $a_{ij}^{(t)}, t=1, 2, ...$ 求 mean, variance，而不是在单个数据矩阵 X 的内部求。
+
+```py
+class BatchNorm(nn.Module):
+    # num_features：完全连接层的输出数量或卷积层的输出通道数。
+    # num_dims： 2表示完全连接层， 4表示卷积层
+    def __init__(self, num_features, num_dims):
+        super().__init__()
+        if num_dims == 2:
+            shape = (1, num_features)
+        else:
+            shape = (1, num_features, 1, 1)
+        # 参与求梯度和迭代的拉伸和偏移参数，分别初始化成1和0
+        self.gamma = nn.Parameter(torch.ones(shape))
+        self.beta = nn.Parameter(torch.zeros(shape))
+        # 非模型参数的变量初始化为0和1
+        self.moving_mean = torch.zeros(shape)
+        self.moving_var = torch.ones(shape)
+    def forward(self, X):
+        # 如果X不在内存上，将moving_mean和moving_var
+        # 复制到X所在显存上
+        if self.moving_mean.device != X.device:
+            self.moving_mean = self.moving_mean.to(X.device)
+            self.moving_var = self.moving_var.to(X.device)
+        # 保存更新过的moving_mean和moving_var
+        Y, self.moving_mean, self.moving_var = batch_norm(
+            X, self.gamma, self.beta, self.moving_mean,
+            self.moving_var, eps=1e-5, momentum=0.9)
+        return Y
+
+
+# put into use: a simpler perspective
+net = nn.Sequential(
+    nn.Conv2d(1, 6, kernel_size=5), BatchNorm(6, num_dims=4), nn.Sigmoid(),
+    nn.AvgPool2d(kernel_size=2, stride=2),
+    nn.Conv2d(6, 16, kernel_size=5), BatchNorm(16, num_dims=4), nn.Sigmoid(),
+    nn.AvgPool2d(kernel_size=2, stride=2), nn.Flatten(),
+    nn.Linear(16*4*4, 120), BatchNorm(120, num_dims=2), nn.Sigmoid(),
+    nn.Linear(120, 84), BatchNorm(84, num_dims=2), nn.Sigmoid(),
+    nn.Linear(84, 10))
+
+lr, num_epochs, batch_size = 1.0, 10, 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
+#### 为什么对于 γ, β 要进行反向传播？
+Batch Normalization 的核心思想是对每一层的输入进行标准化，使得该层的输出均值接近0，方差接近1。这样做的目的是减少内部协变量偏移（internal covariate shift），从而加速训练并提高网络的稳定性。
+
+但是，标准化后的数据可能会丧失一些原本有意义的特征。例如，假设输入数据原本的分布对模型有帮助，直接归一化可能会让这些特征变得不那么显著。因此，Batch Normalization 会引入 缩放（scale, γ） 和 平移（shift, β） 参数，来恢复这种灵活性。
+
+- γ：用于缩放归一化后的输出。通过调整 γ，网络可以控制输出的方差。
+- β：用于平移归一化后的输出。通过调整 β，网络可以控制输出的均值。
+
+反向传播的目的是通过梯度下降（或其他优化方法）来最小化损失函数，从而优化网络的参数。Batch Normalization 中，**γ** 和 **β** 是训练过程中需要优化的参数，因为它们直接影响网络的输出分布。
+
+1. **对 γ 的梯度**：
+   γ 是乘以归一化结果 $\hat{x}$ 的系数。在反向传播时，网络计算损失函数相对于网络输出的梯度，这个梯度会被传递到 $\hat{x}$。然后，通过链式法则，$\gamma$ 会对最终的梯度产生影响。通过更新 $\gamma$，网络能够调整归一化后输出的尺度，从而改善训练过程。
+
+   $$
+   \frac{\partial L}{\partial \gamma} = \frac{\partial L}{\partial y} \cdot \hat{x}
+   $$
+
+2. **对 β 的梯度**：
+   β 是加到归一化结果 $\hat{x}$ 上的常数项，它会影响网络输出的偏移量。在反向传播中，β 会影响最终的输出，因此需要根据损失函数的梯度对其进行更新。
+
+   $$
+   \frac{\partial L}{\partial \beta} = \frac{\partial L}{\partial y}
+   $$
+
+   其中，$\frac{\partial L}{\partial y}$ 是损失函数相对于归一化输出 $y$ 的梯度。
+
+##### 总结
+- **缩放参数（γ）** 和 **平移参数（β）** 是在 Batch Normalization 中引入的额外参数，目的是恢复标准化过程中丧失的特征，使得网络能够自适应地调整输出的分布。
+- 在 **反向传播** 时，这两个参数会参与梯度计算和更新，因为它们直接影响神经网络的输出。通过优化这些参数，网络能够更好地适应数据分布，提升训练效果和稳定性。
+
+### 小结
+- 在模型训练过程中，批量规范化利用小批量的均值和标准差，不断调整神经网络的中间输出，使整个神经网络各层的中间输出值更加稳定。
+- 批量规范化在全连接层和卷积层的使用略有不同。
+- 批量规范化层和暂退层一样，在训练模式和预测模式下计算不同。
+- 批量规范化有许多有益的副作用，主要是正则化。另一方面，”减少内部协变量偏移“的原始动机似乎不是一个有效的解释。
+
+## 残差网络 ResNet
+#### 寻找函数：
+现在假设$f^*$是我们真正想要找到的函数，如果是 $f^* \in \mathcal{F}$，那我们可以轻而易举的训练得到它，但通常我们不会那么幸运。相反，我们将尝试找到一个函数$f^*_\mathcal{F}$ ，这是我们在F中的最佳选择。
+$$
+f_{\mathcal{F}}^* := \arg\min_{f} L(\mathbf{X}, \mathbf{y}, f) \text{ subject to } f \in \mathcal{F}.
+$$
+不断找更复杂的函数，同时只有当较复杂的函数类包含较小的函数类时，我们才能确保提高它们的性能。
+
+#### 残差网络的核心思想：
+每个附加层都应该更容易地包含原始函数作为其元素之一。
+
+
+
+
+
+
 
 
 
