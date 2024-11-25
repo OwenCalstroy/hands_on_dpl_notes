@@ -331,6 +331,23 @@ def batch_norm(X, gamma, beta, moving_mean, moving_var, eps, momentum):
 
 注意！batch normalization 是在同一个 batch 内所有输入矩阵 X 对应位置 $a_{ij}^{(t)}, t=1, 2, ...$ 求 mean, variance，而不是在单个数据矩阵 X 的内部求。
 
+**具体来说**，Batch Normalization 对于每个通道上的特定位置（即每个空间位置）的像素值进行归一化处理。具体来说，Batch Normalization 在每个通道上独立计算整个批量中所有图像的均值和方差，然后使用这些统计量来规范化该通道的每个像素值。
+
+这里的“特定位置”指的是特征图（feature map）中的空间位置，即高度（H）和宽度（W）的每个点。对于每个通道，Batch Normalization 会计算所有图像在该空间位置上的像素值的均值和方差，然后使用这些值来调整和缩放该位置的像素值，使得调整后的像素值具有零均值和单位方差。
+
+**再进一步说** 在卷积神经网络（CNN）中，一个图像在某个卷积层之后确实会生成多个通道（channels）。这些通道是特征图（feature maps）的集合，每个特征图代表不同的特征或激活。
+
+当应用Batch Normalization时，不是将所有图像的所有通道加起来，而是对每个通道独立地进行归一化处理。具体来说：
+
+1. **批量维度（N）**：Batch Normalization会考虑批量中的所有图像。这意味着对于每个通道，它会计算批量中所有图像在该通道上所有空间位置的均值和方差。
+
+2. **通道维度（C）**：对于每个通道，Batch Normalization会独立地计算均值和方差。这意味着每个通道的归一化参数（均值和方差）是独立的。
+
+3. **空间维度（H和W）**：对于每个通道中的每个空间位置（即每个像素位置），Batch Normalization会使用整个批量中该位置的像素值来计算均值和方差。
+
+因此，Batch Normalization是在批量中的每个图像的每个通道上进行的，它考虑了批量大小、通道数以及空间维度（高度和宽度），但归一化过程是在通道维度上独立进行的。这样做的目的是为了保持每个通道特征的分布一致性，同时允许不同通道之间有不同分布，因为它们可能代表不同的特征。
+
+
 ```py
 class BatchNorm(nn.Module):
     # num_features：完全连接层的输出数量或卷积层的输出通道数。
@@ -418,24 +435,162 @@ f_{\mathcal{F}}^* := \arg\min_{f} L(\mathbf{X}, \mathbf{y}, f) \text{ subject to
 $$
 不断找更复杂的函数，同时只有当较复杂的函数类包含较小的函数类时，我们才能确保提高它们的性能。
 
+对于深度神经网络，如果我们能将新添加的层训练成恒等映射（identity function） f(x) = x，新模型和原模型将同样有效。这就是我们的目标。
+
 #### 残差网络的核心思想：
 每个附加层都应该更容易地包含原始函数作为其元素之一。
 
+假设我们的原始输入为x，而希望学出的理想映射为f(x)。一个正常块需要直接拟合出该映射f(x)，而一个残差块需要拟合出残差映射 h(x) = f(x) − x （学这个更简单）， 然后再从输入的地方获得 x ，将 h 和 x 相加从而得到 f(x)（就是shortcut）。这样即使从这个块中没学到东西（f(x) - x 不好），也不会偏差过大，还能从shortcut直接把上一层学到的函数（也就是现在的输入x）传递过去，使得新的复杂模型还是能包含先前的简单模型的。最后作为激活函数的输入。
 
+```py
+import torch
+from torch import nn
+from torch.nn import functional as F
+from d2l import torch as d2l
 
+class Residual(nn.Module):
+    def __init__(self, input_channels, num_channels, use_1x1conv=False, strides=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels, kernel_size=3, padding=1, stride=strides)
+        self.conv2 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=strides)
+        else:
+            self.conv3 = None
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        if self.conv3:  # 残差块的function，调整通道和分辨率
+            X = self.conv3(X)
+        Y += X
+        return F.relu(Y)
 
+# 输入输出形状一致
+blk = Residual(3,3)
+X = torch.rand(4, 3, 6, 6)
+Y = blk(X)
+Y.shape
 
+# 我们也可以在增加输出通道数的同时，减半输出的高和宽。
+blk = Residual(3,6, use_1x1conv=True, strides=2)
+blk(X).shape
+```
 
+### ResNet model
+```py
+b1 = nn.Sequential(nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+    nn.BatchNorm2d(64), nn.ReLU(),
+    nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
 
+# 4个由残差块组成的模块，每个模块使用若干个同样输出通道数的残差块。
+# 第一个模块的通道数同输入通道数一致。由于之前已经使用了步幅为2的最大汇聚层，所以无须减小高和宽。
+# 之后的每个模块在第一个残差块里将上一个模块的通道数翻倍，并将高和宽减半。
 
+def resnet_block(input_channels, num_channels, num_residuals, first_block=False):
+    blk = []
+    for i in range(num_residuals):
+        if i == 0 and not first_block:
+            blk.append(Residual(input_channels, num_channels, use_1x1conv=True, strides=2))
+        else:
+            blk.append(Residual(num_channels, num_channels))
+    return blk
 
+b2 = nn.Sequential(*resnet_block(64, 64, 2, first_block=True))
+b3 = nn.Sequential(*resnet_block(64, 128, 2))
+b4 = nn.Sequential(*resnet_block(128, 256, 2))
+b5 = nn.Sequential(*resnet_block(256, 512, 2))
 
+net = nn.Sequential(b1, b2, b3, b4, b5,
+nn.AdaptiveAvgPool2d((1,1)),
+nn.Flatten(), nn.Linear(512, 10))
 
+lr, num_epochs, batch_size = 0.05, 10, 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=96)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+```
 
+## 稠密连接网络 DenseNet
+借用了泰勒展开的定义。$f(x)=x+g(x)$，分为一个简单的线性项和一个复杂的非线性项。
 
+DenseNet 不是使用 ResNet 的相加方式，而是用连接（[,]）方式。在应用越来越复杂的函数序列之后，我们执行从x到其展开式的映射：
+$$
+\textbf{x} \rightarrow \left[ \textbf{x}, f_1(\textbf{x}), f_2(\left[ \textbf{x}, f_1(\textbf{x}) \right]), f_3(\left[ \textbf{x}, f_1(\textbf{x}), f_2(\left[ \textbf{x}, f_1(\textbf{x}) \right]) \right]), \ldots \right].
+$$
+最后连接进去。
 
+```py
+import torch
+from torch import nn
+from d2l import torch as d2l
 
+def conv_block(input_channels, num_channels):
+    return nn.Sequential(
+        nn.BatchNorm2d(input_channels), nn.ReLU(),
+        nn.Conv2d(input_channels, num_channels, kernel_size=3, padding=1))
 
+class DenseBlock(nn.Module):
+    def __init__(self, num_convs, input_channels, num_channels):
+        super(DenseBlock, self).__init__()
+        layer = []
+        for i in range(num_convs):
+            layer.append(conv_block(
+                num_channels * i + input_channels, num_channels))
+        self.net = nn.Sequential(*layer)
+    def forward(self, X):
+        for blk in self.net:
+            Y = blk(X)
+            # 连接通道维度上每个块的输入和输出
+            X = torch.cat((X, Y), dim=1)
+        return X
 
+blk = DenseBlock(2, 3, 10)
+X = torch.randn(4, 3, 8, 8)
+Y = blk(X)
+print(Y.shape)
+```
+### 过渡层
+7.7.3 过渡层
+由于每个稠密块都会带来通道数的增加，使用过多则会过于复杂化模型。而过渡层可以用来控制模型复杂度。
+它通过1 × 1卷积层来减小通道数，并使用步幅为2的平均汇聚层减半高和宽，从而进一步降低模型复杂度。
+```py
+def transition_block(input_channels, num_channels):
+    return nn.Sequential(
+        nn.BatchNorm2d(input_channels), nn.ReLU(),
+        nn.Conv2d(input_channels, num_channels, kernel_size=1),
+        nn.AvgPool2d(kernel_size=2, stride=2))
+```
 
+### DenseNet
+```py
+b1 = nn.Sequential(
+    nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+    nn.BatchNorm2d(64), nn.ReLU(),
+    nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
 
+# num_channels为当前的通道数
+num_channels, growth_rate = 64, 32
+num_convs_in_dense_blocks = [4, 4, 4, 4]
+blks = []
+for i, num_convs in enumerate(num_convs_in_dense_blocks):
+    blks.append(DenseBlock(num_convs, num_channels, growth_rate))
+    # 上一个稠密块的输出通道数
+    num_channels += num_convs * growth_rate
+    # 在稠密块之间添加一个转换层，使通道数量减半
+    if i != len(num_convs_in_dense_blocks) - 1:
+        blks.append(transition_block(num_channels, num_channels // 2))
+        num_channels = num_channels // 2
+
+net = nn.Sequential(
+    b1, *blks,
+    nn.BatchNorm2d(num_channels), nn.ReLU(),
+    nn.AdaptiveAvgPool2d((1, 1)),
+    nn.Flatten(),
+    nn.Linear(num_channels, 10))
+
+lr, num_epochs, batch_size = 0.1, 10, 256
+train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size, resize=96)
+d2l.train_ch6(net, train_iter, test_iter, num_epochs, lr, d2l.try_gpu())
+
+```
